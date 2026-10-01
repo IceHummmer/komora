@@ -87,6 +87,25 @@ nav button .nav-icon{display:none}
   .item .money{grid-column:2;font-size:13px}
   .stat{min-width:84vw}
 }
+
+.auth-screen{min-height:100dvh;display:grid;place-items:center;padding:20px;background:radial-gradient(circle at top,#e7eee8 0,#f3f2ec 42%,#f3f2ec 100%)}
+.auth-card{width:min(410px,100%);background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:var(--shadow)}
+.auth-card .brand{margin-bottom:20px}
+.auth-card h1{margin:0 0 8px;font-size:29px;letter-spacing:-.04em}
+.auth-card p{margin:0 0 18px;color:var(--muted);line-height:1.45}
+.auth-card input{width:100%;min-height:50px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:18px}
+.auth-card .btn{width:100%;margin-top:12px}
+.auth-error{min-height:20px;margin-top:10px;color:var(--danger);font-size:13px}
+.auth-loading{min-height:100dvh;display:grid;place-items:center;color:var(--muted);font-weight:700}
+.logout-mobile{display:none}
+.logout-link{margin-top:10px;border:0;background:transparent;color:var(--muted);padding:5px 0;text-align:left;font-size:12px}
+.sync-note{display:inline-flex;align-items:center;gap:6px}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:#65a27f}
+@media(max-width:700px){
+  .logout-mobile{display:block;position:absolute;right:13px;top:11px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:10px;min-height:32px;padding:4px 9px;font-size:12px}
+  .auth-screen{padding:14px}
+  .auth-card{border-radius:20px;padding:20px}
+}
 </style>
 </head>
 <body><div id="app"></div><script src="config.js"></script>
@@ -102,8 +121,8 @@ const baseProducts=[
   ["Туалетний папір","Побутове","упак."],["Засіб для миття посуду","Побутове","шт"],["Пакети для сміття","Побутове","упак."],
   ["Піца","Інше","шт"],["Лазанья","Інше","шт"]
 ];
-const KEY="komora-v2",API=()=>String(window.KOMORA_API_URL||"").replace(/\/$/,"");
-let state=load(),view="dashboard",modal=null,receipt=null;
+const LEGACY_KEY="komora-v2",AUTH_KEY="komora-auth-token",API=()=>String(window.KOMORA_API_URL||"").replace(/\/$/,"");
+let state=null,view="dashboard",modal=null,receipt=null,authToken=localStorage.getItem(AUTH_KEY)||"",authLoading=true,saveQueue=Promise.resolve();
 function normalizeName(s){return String(s||"").toLocaleLowerCase("uk-UA").replace(/[’'\u0060]/g,"").replace(/\s+/g," ").trim()}
 function ensureBaseCatalog(s){
   s.categories=Array.isArray(s.categories)?s.categories:[];
@@ -126,8 +145,47 @@ function ensureBaseCatalog(s){
   }
   return s;
 }
-function load(){try{let x=JSON.parse(localStorage.getItem(KEY)||"null");return ensureBaseCatalog(x||{categories:cats0,stores:[],products:[],plans:[],purchases:[]})}catch{return ensureBaseCatalog({categories:cats0,stores:[],products:[],plans:[],purchases:[]})}}
-function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function freshState(){return ensureBaseCatalog({categories:cats0.map(x=>({...x})),stores:[],products:[],plans:[],purchases:[]})}
+function legacyState(){try{const raw=localStorage.getItem(LEGACY_KEY);return raw?ensureBaseCatalog(JSON.parse(raw)):null}catch{return null}}
+async function apiFetch(path,options={}){
+  const headers={...(options.headers||{})};
+  if(authToken) headers.Authorization="Bearer "+authToken;
+  const r=await fetch(API()+path,{...options,headers});
+  if(r.status===401){authToken="";localStorage.removeItem(AUTH_KEY);state=null}
+  return r;
+}
+async function persistStateNow(snapshot=state){
+  if(!authToken||!snapshot)return;
+  const r=await apiFetch("/api/state",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:snapshot})});
+  if(!r.ok){let j={};try{j=await r.json()}catch{};throw new Error(j.error||"Не вдалося зберегти дані")}
+}
+function save(){
+  if(!state||!authToken)return;
+  const snapshot=JSON.parse(JSON.stringify(state));
+  saveQueue=saveQueue.then(()=>persistStateNow(snapshot)).catch(e=>toast(e.message||"Помилка синхронізації"));
+}
+async function loadRemoteState(){
+  authLoading=true;render();
+  try{
+    const r=await apiFetch("/api/state");
+    if(r.status===401){authLoading=false;render();return}
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||"Не вдалося завантажити дані");
+    if(j.state){
+      state=ensureBaseCatalog(j.state);
+      await persistStateNow(JSON.parse(JSON.stringify(state)));
+    }else{
+      state=legacyState()||freshState();
+      await persistStateNow(JSON.parse(JSON.stringify(state)));
+      localStorage.removeItem(LEGACY_KEY);
+    }
+  }catch(e){
+    authToken="";localStorage.removeItem(AUTH_KEY);state=null;
+    sessionStorage.setItem("komora-login-error",e.message||"Помилка з'єднання");
+  }
+  authLoading=false;render();
+}
+async function boot(){if(authToken)await loadRemoteState();else{authLoading=false;render()}}
 const id=p=>p+"-"+Date.now()+"-"+Math.random().toString(16).slice(2),esc=s=>String(s??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[c])),eur=n=>Number.isFinite(+n)?new Intl.NumberFormat("uk-UA",{style:"currency",currency:"EUR"}).format(+n):"—";
 const storeName=x=>state.stores.find(s=>s.id===x)?.name||"Не вибрано",catName=x=>state.categories.find(c=>c.id===x)?.name||"Без категорії",prod=x=>state.products.find(p=>p.id===x);
 function latest(pid,sid){let h=[...(prod(pid)?.prices||[])].sort((a,b)=>new Date(b.date)-new Date(a.date));return h.find(x=>x.storeId===sid)||h[0]||null}
@@ -135,7 +193,10 @@ function spent(){let n=new Date;return state.purchases.filter(p=>{let d=new Date
 function toast(t){let e=document.createElement("div");e.className="toast";e.textContent=t;document.body.append(e);setTimeout(()=>e.remove(),2200)}
 function head(title,sub){return '<div class="top"><div><div class="ey">Моя комора</div><h1>'+title+'</h1><div class="sub">'+sub+'</div></div><div class="chip"><div class="av">АК</div><span>Особистий облік</span></div></div>'}
 function nav(){return [["dashboard","🛒","План"],["products","🥫","Продукти"],["stores","🏪","Магазини"],["history","🧾","Історія"],["categories","▦","Категорії"]].map(x=>'<button data-view="'+x[0]+'" class="'+(view===x[0]?"on":"")+'"><span class="nav-icon">'+x[1]+'</span><span>'+x[2]+'</span></button>').join("")}
-function render(){app.innerHTML='<div class="shell"><aside class="side"><div class="brand"><div class="mark">К</div><div>комора<small>особистий простір</small></div></div><nav>'+nav()+'</nav><div class="foot">EUR · Українська<br>Каталог і плани зберігаються у браузері.</div></aside><main class="main">'+page()+'</main></div>'+(modal?modalHtml():"");bind()}
+function loginHtml(){let err=sessionStorage.getItem("komora-login-error")||"";sessionStorage.removeItem("komora-login-error");return '<div class="auth-screen"><div class="auth-card"><div class="brand"><div class="mark">К</div><div>комора<small>особистий простір</small></div></div><h1>Вхід до Комори</h1><p>Введіть пароль. Після входу продукти, плани, ціни та історія завантажуються з сервера.</p><form id="loginForm"><input name="password" type="password" inputmode="numeric" autocomplete="current-password" placeholder="Пароль" required autofocus><button class="btn primary">Увійти</button><div class="auth-error" id="authError">'+esc(err)+'</div></form></div></div>'}
+async function loginSubmit(e){e.preventDefault();let form=e.target,btn=form.querySelector("button"),err=document.getElementById("authError");btn.disabled=true;err.textContent="";try{let r=await fetch(API()+"/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:new FormData(form).get("password")})}),j=await r.json();if(!r.ok)throw new Error(j.error||"Помилка входу");authToken=j.token;localStorage.setItem(AUTH_KEY,authToken);await loadRemoteState()}catch(x){err.textContent=x.message||"Помилка входу";btn.disabled=false}}
+function logout(){authToken="";state=null;localStorage.removeItem(AUTH_KEY);render()}
+function render(){if(authLoading){app.innerHTML='<div class="auth-loading">Завантаження…</div>';return}if(!authToken||!state){app.innerHTML=loginHtml();let lf=document.getElementById("loginForm");if(lf)lf.onsubmit=loginSubmit;return}app.innerHTML='<div class="shell"><aside class="side"><div class="brand"><div class="mark">К</div><div>комора<small>особистий простір</small></div></div><button class="logout-mobile" data-logout>Вийти</button><nav>'+nav()+'</nav><div class="foot"><span class="sync-note"><span class="sync-dot"></span> Дані на сервері</span><br>EUR · Українська<button class="logout-link" data-logout>Вийти</button></div></aside><main class="main">'+page()+'</main></div>'+(modal?modalHtml():"");bind()}
 function page(){return view==="products"?productsPage():view==="stores"?storesPage():view==="history"?historyPage():view==="categories"?categoriesPage():dashboard()}
 function dashboard(){let active=state.plans.filter(p=>p.status==="active");return head("План закупівлі","Сплануйте покупки. Відмічайте знайдене. Звіряйте з чеком.")+
 '<section class="hero"><div class="ey" style="color:#d8e8df">Від плану до покупки</div><h2>Один список. Усі покупки.</h2><p>Оберіть продукти, відмічайте знайдене у магазині, завантажте чек — AI розпізнає різні мови, перекладе позиції українською і запропонує відповідності та фактичні ціни.</p><div class="actions"><button class="btn primary" data-open="plan">＋ Новий план</button><button class="btn ghost" data-view="products">Базовий перелік</button></div></section>'+
@@ -150,11 +211,11 @@ function modalHtml(){if(modal.type==="product")return wrap("Новий прод�
 function wrap(title,body){return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>'+title+'</h3><form id="form">'+body+'<div class="modal-actions"><button type="button" class="btn ghost" data-close>Скасувати</button><button class="btn primary">Зберегти</button></div></form></div></div>'}
 function manualModal(){let p=state.plans.find(x=>x.id===modal.planId),items=p.items.filter(i=>i.checked);return wrap("Фактичні ціни",'<div class="field"><label>Дата</label><input type="date" name="date" value="'+new Date().toISOString().slice(0,10)+'"></div><div style="margin-top:12px">'+items.map(i=>{let pr=prod(i.productId),lp=latest(i.productId,p.storeId);return '<div class="row"><div><b>'+esc(pr.name)+'</b><div class="muted">'+i.qty+' '+esc(pr.unit)+'</div></div><input style="width:115px;padding:9px;border:1px solid var(--line);border-radius:10px" type="number" step=".01" min="0" name="price-'+i.productId+'" value="'+(lp?.price??"")+'" required></div>'}).join("")+'</div>')}
 function receiptModal(){let p=state.plans.find(x=>x.id===modal.planId);if(!receipt)return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>AI-розпізнавання чека</h3><p class="muted">Фото JPG/PNG/WEBP або PDF. Чек може бути фінською, шведською, англійською або змішаним — назви будуть приведені до української.</p><input id="receiptFile" type="file" accept="image/*,application/pdf"><div class="status" id="aiStatus">'+(API()?"Готово до завантаження.":"Backend URL ще не налаштовано.")+'</div><div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" type="button" id="scanBtn">Розпізнати чек</button></div></div></div>';let options='<option value="">Не зіставляти</option>'+p.items.map(i=>'<option value="'+i.productId+'">'+esc(prod(i.productId)?.name||"")+'</option>').join("");return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>Перевірте результат</h3><div class="muted">'+esc(receipt.store_name||"Магазин")+(receipt.receipt_date?" · "+esc(receipt.receipt_date):"")+(receipt.total!=null?" · "+eur(receipt.total):"")+'</div><div class="receipt"><table><thead><tr><th>Чек</th><th>Ціна</th><th>Позиція плану</th></tr></thead><tbody>'+receipt.items.map((x,i)=>'<tr><td><b>'+esc(x.ukrainian_name)+'</b><div class="muted">'+esc(x.raw_name)+'</div></td><td>'+eur(x.unit_price??x.total_price)+'</td><td><select data-match="'+i+'">'+options.replace('value="'+(x.matched_product_id||"")+'"','value="'+(x.matched_product_id||"")+'" selected')+'</select></td></tr>').join("")+'</tbody></table></div>'+(receipt.warnings_uk?.length?'<div class="receipt">'+receipt.warnings_uk.map(esc).join("<br>")+'</div>':"")+'<div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" id="confirmReceipt">Підтвердити покупку</button></div></div></div>'}
-function bind(){document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{view=b.dataset.view;modal=null;receipt=null;render()});document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{modal={type:b.dataset.open};render()});document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>{modal=null;receipt=null;render()});document.querySelectorAll("[data-toggle]").forEach(b=>b.onclick=()=>{let p=state.plans.find(x=>x.id===b.dataset.toggle);p.open=!p.open;save();render()});document.querySelectorAll("[data-check]").forEach(c=>c.onchange=()=>{let [a,b]=c.dataset.check.split(":");state.plans.find(x=>x.id===a).items.find(x=>x.productId===b).checked=c.checked;save();render()});document.querySelectorAll("[data-receipt]").forEach(b=>b.onclick=()=>{modal={type:"receipt",planId:b.dataset.receipt};receipt=null;render()});document.querySelectorAll("[data-manual]").forEach(b=>b.onclick=()=>{modal={type:"manual",planId:b.dataset.manual};render()});document.querySelectorAll("[data-delplan]").forEach(b=>b.onclick=()=>{if(confirm("Видалити план?")){state.plans=state.plans.filter(x=>x.id!==b.dataset.delplan);save();render()}});document.querySelectorAll("[data-delprod]").forEach(b=>b.onclick=()=>{if(confirm("Видалити продукт?")){state.products=state.products.filter(x=>x.id!==b.dataset.delprod);save();render()}});document.querySelectorAll("[data-delstore]").forEach(b=>b.onclick=()=>{if(confirm("Видалити магазин?")){state.stores=state.stores.filter(x=>x.id!==b.dataset.delstore);save();render()}});document.querySelectorAll("[data-delcat]").forEach(b=>b.onclick=()=>{if(state.products.some(p=>p.categoryId===b.dataset.delcat))return alert("У категорії є продукти.");state.categories=state.categories.filter(x=>x.id!==b.dataset.delcat);save();render()});let f=document.getElementById("form");if(f)f.onsubmit=submit;let scan=document.getElementById("scanBtn");if(scan)scan.onclick=scanReceipt;let conf=document.getElementById("confirmReceipt");if(conf)conf.onclick=confirmReceipt}
+function bind(){document.querySelectorAll("[data-logout]").forEach(b=>b.onclick=logout);document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{view=b.dataset.view;modal=null;receipt=null;render()});document.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>{modal={type:b.dataset.open};render()});document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>{modal=null;receipt=null;render()});document.querySelectorAll("[data-toggle]").forEach(b=>b.onclick=()=>{let p=state.plans.find(x=>x.id===b.dataset.toggle);p.open=!p.open;save();render()});document.querySelectorAll("[data-check]").forEach(c=>c.onchange=()=>{let [a,b]=c.dataset.check.split(":");state.plans.find(x=>x.id===a).items.find(x=>x.productId===b).checked=c.checked;save();render()});document.querySelectorAll("[data-receipt]").forEach(b=>b.onclick=()=>{modal={type:"receipt",planId:b.dataset.receipt};receipt=null;render()});document.querySelectorAll("[data-manual]").forEach(b=>b.onclick=()=>{modal={type:"manual",planId:b.dataset.manual};render()});document.querySelectorAll("[data-delplan]").forEach(b=>b.onclick=()=>{if(confirm("Видалити план?")){state.plans=state.plans.filter(x=>x.id!==b.dataset.delplan);save();render()}});document.querySelectorAll("[data-delprod]").forEach(b=>b.onclick=()=>{if(confirm("Видалити продукт?")){state.products=state.products.filter(x=>x.id!==b.dataset.delprod);save();render()}});document.querySelectorAll("[data-delstore]").forEach(b=>b.onclick=()=>{if(confirm("Видалити магазин?")){state.stores=state.stores.filter(x=>x.id!==b.dataset.delstore);save();render()}});document.querySelectorAll("[data-delcat]").forEach(b=>b.onclick=()=>{if(state.products.some(p=>p.categoryId===b.dataset.delcat))return alert("У категорії є продукти.");state.categories=state.categories.filter(x=>x.id!==b.dataset.delcat);save();render()});let f=document.getElementById("form");if(f)f.onsubmit=submit;let scan=document.getElementById("scanBtn");if(scan)scan.onclick=scanReceipt;let conf=document.getElementById("confirmReceipt");if(conf)conf.onclick=confirmReceipt}
 function submit(e){e.preventDefault();let f=new FormData(e.target);if(modal.type==="product")state.products.push({id:id("prod"),name:f.get("name").trim(),categoryId:f.get("category"),unit:f.get("unit").trim()||"шт",preferredStoreId:f.get("store")||null,prices:[]});if(modal.type==="store")state.stores.push({id:id("store"),name:f.get("name").trim(),note:f.get("note").trim()});if(modal.type==="category")state.categories.push({id:id("cat"),name:f.get("name").trim()});if(modal.type==="plan"){let items=state.products.filter(p=>f.get("p-"+p.id)==="on").map(p=>({productId:p.id,qty:+f.get("q-"+p.id)||1,checked:false}));if(!items.length)return alert("Оберіть хоча б один продукт.");state.plans.unshift({id:id("plan"),name:f.get("name").trim(),storeId:f.get("store"),createdAt:new Date().toISOString(),status:"active",open:true,items})}if(modal.type==="manual"){let p=state.plans.find(x=>x.id===modal.planId),date=f.get("date"),items=p.items.filter(i=>i.checked).map(i=>{let price=+f.get("price-"+i.productId);prod(i.productId).prices.push({storeId:p.storeId,price,date:new Date(date).toISOString()});return {productId:i.productId,qty:i.qty,price,subtotal:price*i.qty}});finishPurchase(p,items,new Date(date).toISOString())}save();modal=null;toast("Збережено");render()}
 function fileData(file){return new Promise((res,rej)=>{let r=new FileReader;r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)})}
-async function scanReceipt(){if(!API())return alert("Backend URL ще не налаштовано.");let file=document.getElementById("receiptFile").files[0];if(!file)return alert("Оберіть файл чека.");let st=document.getElementById("aiStatus");st.textContent="Розпізнаю чек…";try{let p=state.plans.find(x=>x.id===modal.planId),dataUrl=await fileData(file),plannedItems=p.items.map(i=>({productId:i.productId,name:prod(i.productId)?.name||"",qty:i.qty,unit:prod(i.productId)?.unit||"шт",checked:i.checked}));let r=await fetch(API()+"/api/receipt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fileName:file.name,mimeType:file.type,dataUrl,plannedItems})});let j=await r.json();if(!r.ok)throw new Error(j.error||"Помилка API");receipt=j;render()}catch(e){st=document.getElementById("aiStatus");if(st)st.textContent="Помилка: "+e.message}}
+async function scanReceipt(){if(!API())return alert("Backend URL ще не налаштовано.");let file=document.getElementById("receiptFile").files[0];if(!file)return alert("Оберіть файл чека.");let st=document.getElementById("aiStatus");st.textContent="Розпізнаю чек…";try{let p=state.plans.find(x=>x.id===modal.planId),dataUrl=await fileData(file),plannedItems=p.items.map(i=>({productId:i.productId,name:prod(i.productId)?.name||"",qty:i.qty,unit:prod(i.productId)?.unit||"шт",checked:i.checked}));let r=await apiFetch("/api/receipt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fileName:file.name,mimeType:file.type,dataUrl,plannedItems})});let j=await r.json();if(!r.ok)throw new Error(j.error||"Помилка API");receipt=j;render()}catch(e){st=document.getElementById("aiStatus");if(st)st.textContent="Помилка: "+e.message}}
 function confirmReceipt(){let p=state.plans.find(x=>x.id===modal.planId),date=receipt.receipt_date?new Date(receipt.receipt_date).toISOString():new Date().toISOString(),items=[];document.querySelectorAll("[data-match]").forEach(s=>{if(!s.value)return;let x=receipt.items[+s.dataset.match],pi=p.items.find(i=>i.productId===s.value);if(!pi)return;let price=x.unit_price!=null?+x.unit_price:(x.total_price!=null?+x.total_price/(x.quantity||1):null);if(price==null)return;let pr=prod(s.value);pr.prices=pr.prices||[];pr.prices.push({storeId:p.storeId,price,date});pi.checked=true;items.push({productId:s.value,qty:pi.qty,price,subtotal:price*pi.qty})});if(!items.length)return alert("Оберіть хоча б одну відповідність.");finishPurchase(p,items,date);save();modal=null;receipt=null;toast("Покупку та фактичні ціни збережено");render()}
 function finishPurchase(p,items,date){let total=items.reduce((s,i)=>s+i.subtotal,0);state.purchases.unshift({id:id("buy"),planId:p.id,storeId:p.storeId,date,items,total});p.status="completed"}
-render();
+boot();
 </script></body></html>
