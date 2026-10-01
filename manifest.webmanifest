@@ -1,0 +1,11 @@
+{
+  "name": "Комора",
+  "short_name": "Комора",
+  "lang": "uk",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f2ec",
+  "theme_color": "#f6f5ef",
+  "description": "Планування покупок, чеки та історія цін."
+}
