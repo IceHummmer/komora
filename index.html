@@ -274,9 +274,15 @@ function purchaseCard(p){
   let dateText=Number.isNaN(date.getTime())?String(p.date||""):date.toLocaleDateString("uk-UA");
   let rows=(p.items||[]).map((it,idx)=>{
     let key=p.id+":"+idx;
-    let productOpts=state.products.map(pr=>'<option value="'+pr.id+'" '+(pr.id===it.productId?"selected":"")+'>'+esc(pr.name)+'</option>').join("");
     let storeOpts='<option value="">Без магазину</option>'+state.stores.map(s=>'<option value="'+s.id+'" '+((it.storeId||p.storeId)===s.id?"selected":"")+'>'+esc(s.name)+'</option>').join("");
-    return '<div class="archive-item"><div class="archive-editor"><label>Продукт<select data-purchase-product="'+key+'">'+productOpts+'</select></label><label>Кількість<input data-purchase-qty="'+key+'" type="number" min=".01" step=".01" value="'+(Number(it.qty)||1)+'"></label><label>Ціна, EUR<input data-purchase-price="'+key+'" type="number" min="0" step=".01" value="'+(Number(it.price)||0)+'"></label><label>Магазин<select data-purchase-store="'+key+'">'+storeOpts+'</select></label></div><div class="archive-actions"><button class="btn soft" data-savepurchaseitem="'+key+'">Зберегти зміни</button><button class="btn danger" data-delpurchaseitem="'+key+'">Видалити позицію</button></div></div>';
+    let firstField;
+    if(it.productId){
+      let productOpts=state.products.map(pr=>'<option value="'+pr.id+'" '+(pr.id===it.productId?"selected":"")+'>'+esc(pr.name)+'</option>').join("");
+      firstField='<label>Продукт<select data-purchase-product="'+key+'">'+productOpts+'</select></label>';
+    }else{
+      firstField='<label>Позиція<input data-purchase-name="'+key+'" value="'+esc(it.name||it.rawName||"Без назви")+'"><span class="pill" style="margin-top:5px;width:max-content">Без категорії</span></label>';
+    }
+    return '<div class="archive-item"><div class="archive-editor">'+firstField+'<label>Кількість<input data-purchase-qty="'+key+'" type="number" min=".01" step=".01" value="'+(Number(it.qty)||1)+'"></label><label>Ціна, EUR<input data-purchase-price="'+key+'" type="number" step=".01" value="'+(Number(it.price)||0)+'"></label><label>Магазин<select data-purchase-store="'+key+'">'+storeOpts+'</select></label></div><div class="archive-actions"><button class="btn soft" data-savepurchaseitem="'+key+'">Зберегти зміни</button><button class="btn danger" data-delpurchaseitem="'+key+'">Видалити позицію</button></div></div>';
   }).join("");
   return '<div class="archive-card"><div class="archive-head"><div><b>'+esc(dateText)+' · '+esc(purchaseStoreLabel(p))+'</b><div class="muted">'+(p.items?.length||0)+' позицій · '+eur(p.total)+'</div></div><div class="actions" style="margin:0"><button class="btn soft" data-archtoggle="'+p.id+'">'+(open?"Згорнути":"Переглянути")+'</button><button class="btn danger" data-delpurchase="'+p.id+'">Видалити закупівлю</button></div></div>'+(open?'<div class="archive-body">'+(rows||'<div class="empty">У закупівлі немає позицій.</div>')+'</div>':"")+'</div>';
 }
@@ -297,7 +303,7 @@ function modalHtml(){
 }
 function wrap(title,body){return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>'+title+'</h3><form id="form">'+body+'<div class="modal-actions"><button type="button" class="btn ghost" data-close>Скасувати</button><button class="btn primary">Зберегти</button></div></form></div></div>'}
 function manualModal(){let p=state.plans.find(x=>x.id===modal.planId),items=filteredPlanItems(p).filter(i=>i.checked);return wrap("Фактичні ціни",'<div class="field"><label>Дата</label><input type="date" name="date" value="'+new Date().toISOString().slice(0,10)+'"></div><div style="margin-top:12px">'+(items.length?items.map(i=>{let pr=prod(i.productId),lp=latest(i.productId,i.storeId);return '<div class="row"><div><b>'+esc(pr.name)+'</b><div class="muted">'+i.qty+' '+esc(pr.unit)+' · '+esc(i.storeId?storeName(i.storeId):"Без магазину")+'</div></div><input style="width:115px;padding:9px;border:1px solid var(--line);border-radius:10px" type="number" step=".01" min="0" name="price-'+i.productId+'" value="'+(lp?.price??"")+'" required></div>'}).join(""):'<div class="empty">Немає відмічених позицій у цьому фільтрі.</div>')+'</div>')}
-function receiptModal(){let p=state.plans.find(x=>x.id===modal.planId);if(!receipt)return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>AI-розпізнавання чека</h3><p class="muted">Фото JPG/PNG/WEBP або PDF. Чек може бути фінською, шведською, англійською або змішаним — назви будуть приведені до української.</p><input id="receiptFile" type="file" accept="image/*,application/pdf"><div class="status" id="aiStatus">'+(API()?"Готово до завантаження.":"Backend URL ще не налаштовано.")+'</div><div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" type="button" id="scanBtn">Розпізнати чек</button></div></div></div>';let eligible=filteredPlanItems(p),options='<option value="">Не зіставляти</option>'+eligible.map(i=>'<option value="'+i.productId+'">'+esc(prod(i.productId)?.name||"")+'</option>').join("");return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>Перевірте результат</h3><div class="muted">'+esc(receipt.store_name||"Магазин")+(receipt.receipt_date?" · "+esc(receipt.receipt_date):"")+(receipt.total!=null?" · "+eur(receipt.total):"")+'</div><div class="receipt"><table><thead><tr><th>Чек</th><th>Ціна</th><th>Позиція плану</th></tr></thead><tbody>'+receipt.items.map((x,i)=>'<tr><td><b>'+esc(x.ukrainian_name)+'</b><div class="muted">'+esc(x.raw_name)+'</div></td><td>'+eur(x.unit_price??x.total_price)+'</td><td><select data-match="'+i+'">'+options.replace('value="'+(x.matched_product_id||"")+'"','value="'+(x.matched_product_id||"")+'" selected')+'</select></td></tr>').join("")+'</tbody></table></div>'+(receipt.warnings_uk?.length?'<div class="receipt">'+receipt.warnings_uk.map(esc).join("<br>")+'</div>':"")+'<div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" type="button" id="confirmReceipt">Підтвердити покупку</button></div></div></div>'}
+function receiptModal(){let p=state.plans.find(x=>x.id===modal.planId);if(!receipt)return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>AI-розпізнавання чека</h3><p class="muted">Фото JPG/PNG/WEBP або PDF. Чек може бути фінською, шведською, англійською або змішаним — назви будуть приведені до української.</p><input id="receiptFile" type="file" accept="image/*,application/pdf"><div class="status" id="aiStatus">'+(API()?"Готово до завантаження.":"Backend URL ще не налаштовано.")+'</div><div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" type="button" id="scanBtn">Розпізнати чек</button></div></div></div>';let eligible=filteredPlanItems(p);return '<div class="modal-bg" data-close><div class="modal" onclick="event.stopPropagation()"><h3>Перевірте результат</h3><div class="muted">'+esc(receipt.store_name||"Магазин")+(receipt.receipt_date?" · "+esc(receipt.receipt_date):"")+(receipt.total!=null?" · "+eur(receipt.total):"")+'</div><div class="receipt"><table><thead><tr><th>Чек</th><th>Ціна</th><th>Позиція плану</th></tr></thead><tbody>'+receipt.items.map((x,i)=>{let opts='<option value="__uncategorized__" '+(!x.matched_product_id?"selected":"")+'>Без категорії</option>'+eligible.map(it=>'<option value="'+it.productId+'" '+(x.matched_product_id===it.productId?"selected":"")+'>'+esc(prod(it.productId)?.name||"")+'</option>').join("");return '<tr><td><b>'+esc(x.ukrainian_name||x.raw_name||"Без назви")+'</b><div class="muted">'+esc(x.raw_name||"")+'</div></td><td>'+eur(x.total_price??x.unit_price)+'</td><td><select data-match="'+i+'">'+opts+'</select></td></tr>'}).join("")+'</tbody></table></div>'+(receipt.warnings_uk?.length?'<div class="receipt">'+receipt.warnings_uk.map(esc).join("<br>")+'</div>':"")+'<div class="modal-actions"><button class="btn ghost" data-close>Скасувати</button><button class="btn primary" type="button" id="confirmReceipt">Підтвердити покупку</button></div></div></div>'}
 function bind(){
   document.querySelectorAll("[data-logout]").forEach(b=>b.onclick=logout);
   document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{view=b.dataset.view;modal=null;receipt=null;render()});
@@ -326,13 +332,16 @@ function bind(){
 function savePurchaseItem(key){
   let [purchaseId,idxRaw]=key.split(":"),idx=Number(idxRaw),p=state.purchases.find(x=>x.id===purchaseId),it=p?.items?.[idx];
   if(!p||!it)return;
-  let newProductId=document.querySelector('[data-purchase-product="'+key+'"]').value;
+  let productEl=document.querySelector('[data-purchase-product="'+key+'"]');
+  let nameEl=document.querySelector('[data-purchase-name="'+key+'"]');
+  let newProductId=productEl?productEl.value:null;
+  let newName=nameEl?nameEl.value.trim():(it.name||null);
   let qty=Number(document.querySelector('[data-purchase-qty="'+key+'"]').value);
   let price=Number(document.querySelector('[data-purchase-price="'+key+'"]').value);
   let storeId=document.querySelector('[data-purchase-store="'+key+'"]').value||null;
-  if(!newProductId||!Number.isFinite(qty)||qty<=0||!Number.isFinite(price)||price<0)return alert("Перевірте продукт, кількість і ціну.");
+  if(!Number.isFinite(qty)||qty<=0||!Number.isFinite(price)||(!newProductId&&!newName))return alert("Перевірте позицію, кількість і ціну.");
   removeLinkedPrice(it,p);
-  it.productId=newProductId;it.qty=qty;it.price=price;it.storeId=storeId;it.subtotal=qty*price;it.priceId=addPriceRecord(newProductId,storeId,price,p.date);
+  it.productId=newProductId||null;it.name=newProductId?null:newName;it.qty=qty;it.price=price;it.storeId=storeId;it.subtotal=qty*price;it.priceId=newProductId?addPriceRecord(newProductId,storeId,price,p.date):null;
   p.storeId=commonStoreId(p.items);recalcPurchase(p);save();toast("Позицію оновлено");render()
 }
 function deletePurchaseItem(key){
@@ -413,18 +422,41 @@ async function confirmReceipt(){
     const byProduct=new Map();
     document.querySelectorAll("[data-match]").forEach(s=>{
       if(!s.value)return;
-      let x=receipt.items[+s.dataset.match],pi=p.items.find(i=>i.productId===s.value);
-      if(!x||!pi)return;
+      let x=receipt.items[+s.dataset.match];
+      if(!x)return;
       let q=Number(x.quantity)||1;
-      let price=x.unit_price!=null?Number(x.unit_price):(x.total_price!=null?Number(x.total_price)/q:null);
+      let subtotal=(x.total_price!=null&&Number.isFinite(Number(x.total_price)))?Number(x.total_price):null;
+      let price=x.unit_price!=null&&Number.isFinite(Number(x.unit_price))?Number(x.unit_price):(subtotal!=null?subtotal/q:null);
       if(price==null||!Number.isFinite(price))return;
+      if(subtotal==null)subtotal=price*q;
+
+      if(s.value==="__uncategorized__"){
+        let filter=shopFilters[p.id]||"all";
+        let storeId=matchReceiptStore(receipt.store_name)||(filter!=="all"&&filter!=="none"?filter:null);
+        let key="uncat-"+s.dataset.match;
+        byProduct.set(key,{
+          productId:null,
+          name:x.ukrainian_name||x.raw_name||"Без назви",
+          rawName:x.raw_name||null,
+          categoryId:null,
+          qty:q,
+          unit:x.unit||"шт",
+          price,
+          subtotal,
+          storeId:storeId||null,
+          priceId:null
+        });
+        return;
+      }
+
+      let pi=p.items.find(i=>i.productId===s.value);
+      if(!pi)return;
       let pr=prod(s.value);
       if(!pr)return;
       let storeId=pi.storeId||matchReceiptStore(receipt.store_name)||null;
       let priceId=addPriceRecord(s.value,storeId,price,date);
       pi.checked=true;
       const existing=byProduct.get(s.value);
-      const subtotal=(x.total_price!=null&&Number.isFinite(Number(x.total_price)))?Number(x.total_price):price*q;
       if(existing){
         existing.qty+=q;
         existing.subtotal+=subtotal;
@@ -433,7 +465,7 @@ async function confirmReceipt(){
       }
     });
     items=[...byProduct.values()];
-    if(!items.length)throw new Error("Оберіть хоча б одну відповідність.");
+    if(!items.length)throw new Error("У чеку немає позицій для збереження.");
     finishPurchase(p,items,date);
     const snapshot=JSON.parse(JSON.stringify(state));
     await persistStateNow(snapshot);
