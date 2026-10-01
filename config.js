@@ -1,1 +1,1 @@
-window.KOMORA_API_URL = "";
+window.KOMORA_API_URL = "https://komora-be.onrender.com";
